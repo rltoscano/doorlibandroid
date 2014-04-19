@@ -1,5 +1,6 @@
 package net.gombi.door.lib;
 
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.UnsupportedEncodingException;
@@ -47,15 +48,15 @@ public class ApiClient {
     this.c = c;
     httpClient = AndroidHttpClient.newInstance("GombiDoor", c);
     this.acctPrefName = acctPrefName;
-    baseUrl = "https://" + R.string.serviceHostName + "/api/";
+    baseUrl = "https://" + c.getString(R.string.serviceHostName) + "/api/";
   }
 
-  public List<Door> listDoors(PermissionLevel level) throws ApiClientException {
+  public synchronized List<Door> listDoors(PermissionLevel level) throws ApiClientException {
     return listDoors(level, null);
   }
 
-  public List<Door> listDoors(PermissionLevel level, String devId) throws ApiClientException {
-    Log.i(LOG_TAG, "Listing doors.");
+  public synchronized List<Door> listDoors(PermissionLevel level, String devId)
+      throws ApiClientException {
     StringBuilder sb = new StringBuilder(baseUrl + "doors");
     sb.append("?level=").append(level.getValue());
     if (devId != null) {
@@ -67,7 +68,7 @@ public class ApiClient {
     return new Gson().fromJson(r, doorListType.getType());
   }
 
-  public Door createDoor(Door d) throws ApiClientException {
+  public synchronized Door createDoor(Door d) throws ApiClientException {
     Log.i(LOG_TAG, "Creating door.");
     HttpPost post = new HttpPost(baseUrl + "doors");
     List<NameValuePair> params = new LinkedList<NameValuePair>();
@@ -85,7 +86,7 @@ public class ApiClient {
     return doors.get(0);
   }
 
-  public Door updateDoor(Door d) throws ApiClientException {
+  public synchronized Door updateDoor(Door d) throws ApiClientException {
     Log.i(LOG_TAG, "Updating door.");
     if (d.getKey() == null) {
       throw new ApiClientException("Given door has no key.");
@@ -106,7 +107,7 @@ public class ApiClient {
     return doors.get(0);
   }
 
-  public void openDoor(String doorKey) throws ApiClientException {
+  public synchronized void openDoor(String doorKey) throws ApiClientException {
     Log.i(LOG_TAG, "Opening door: " + doorKey);
     HttpPost post = new HttpPost(baseUrl + "open");
     List<NameValuePair> params = new LinkedList<NameValuePair>();
@@ -116,7 +117,12 @@ public class ApiClient {
     } catch (UnsupportedEncodingException e) {
       throw new ApiClientException(e);
     }
-    request(post);
+    Reader r = request(post);
+    try {
+      r.close();
+    } catch (IOException e) {
+      throw new ApiClientException(e);
+    }
     return;
   }
 
@@ -124,6 +130,7 @@ public class ApiClient {
     String authToken = getOAuthToken();
     req.setHeader("Authorization", "Bearer " + authToken);
     HttpResponse response;
+    Log.v(LOG_TAG, "Executing request: " + req.getMethod() + " " + req.getURI());
     try {
       response = httpClient.execute(req);
     } catch (Exception e) {
@@ -139,10 +146,12 @@ public class ApiClient {
         throw new ApiClientException(e);
       }
     } else if (serverCode == 401 || serverCode == 403) {
+      Log.e(LOG_TAG, "Received 401 or 403");
       // Bad token, invalidate.
       GoogleAuthUtil.invalidateToken(c, authToken);
       throw new ApiClientException("Server auth error");
     } else {
+      Log.e(LOG_TAG, "Received unexpected status code: " + serverCode);
       // Unknown error, do something else.
       throw new ApiClientException("Server returned the following error code: " + serverCode);
     }
